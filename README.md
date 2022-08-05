@@ -13,6 +13,24 @@ source venv/bin/activate
 python3 install -r requirements.txt
 
 ```
+Create ENV file
+
+```
+touch .env
+```
+Add variables to ENV file
+
+```
+DO_KEY=
+ZEROSSL_KEY=
+UC_IP=
+UC_USER=
+UC_PASS=
+```
+Run python scripts with correct flags
+```
+python3 get_cert.py --host cucm --domain cisco.com -ca -v
+```
 
 ## Blog
 
