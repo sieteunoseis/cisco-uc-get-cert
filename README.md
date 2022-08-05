@@ -1,7 +1,6 @@
 # Cisco UC certificate generation using ZeroSSL and Digital Ocean
 
-> Python project that will generate a CSR, create a certificate on ZeroSSL, verify domain via Digital Ocean, sign and install on UC platforms
-
+> Python project that will generate a CSR on UC platform, request a certificate from ZeroSSL, verify domain via Digital Ocean, and install CA and signed certificate on server.
 
 ## Usage
 
