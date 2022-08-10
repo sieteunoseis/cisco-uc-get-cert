@@ -9,7 +9,7 @@ Create python enviromemnt
 ```
 python3 -m venv venv
 source venv/bin/activate
-python3 install -r requirements.txt
+pip3 install -r requirements.txt
 
 ```
 Create ENV file
