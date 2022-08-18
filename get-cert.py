@@ -275,12 +275,14 @@ def upload_uc_ca(server_ip, os_user, os_pass, service, certificate):
     }
 
     body = {
-        "service": service,
-        "certificates": [
-                certificate
+        "service": [
+            service
             ],
-        "description": "ZeroSSL Trust Certificate"
-        }
+            "certificates": [
+                certificate
+                ],
+                "description": "ZeroSSL Trust Certificate"
+                }
 
     try:
         res = requests.post(url, headers=headers, json=body, verify=False, auth=(os_user, os_pass))
