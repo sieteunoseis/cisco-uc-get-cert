@@ -7,7 +7,8 @@ import logging
 import os
 import sys
 import time
-import paramiko
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from paramiko_expect import SSHClientInteraction
 from dotenv import load_dotenv
 
@@ -41,11 +42,18 @@ uc_ip = os.getenv('UC_IP')
 uc_user = os.getenv('UC_USER')
 uc_pass = os.getenv('UC_PASS')
 
-if not do_token:
-    print("Digital Ocean API key not defined in env variable DO_KEY")
-    sys.exit(1)
-elif not zerossl_token:
-    print("ZeroSSL API key not defined in env variable ZEROSSL_KEY")
+if not "DO_KEY" in os.environ and "ZEROSSL_KEY" not in os.environ\
+    and "UC_IP" not in os.environ and "UC_USER" not in os.environ and "UC_PASS" not in os.environ:
+
+    print("""
+    Error: missing one or more environment variables.
+    Please ensure you've defined the following:
+    DO_KEY`
+    ZEROSSL_KEY
+    UC_IP
+    UC_USER
+    UC_PASS
+    """)
     sys.exit(1)
 
 # Set base URLs for APIs
@@ -193,61 +201,126 @@ def delete_cname():
 
     requests.delete(api_url, headers=do_headers)
 
-def cisco_uc_command(server_ip, os_user, os_pass,command,interaction = False):
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(server_ip, username=os_user, password=os_pass)
-    interact = SSHClientInteraction(ssh, timeout=90, display=True,lines_to_check=5)
+def generate_uc_csr(server_ip, os_user, os_pass, service, domain):
+    """
+    gets csr from uc server
+    """
 
-    # "display=True" is just to show you what script does in real time. While in production you can set it to False
-    if interaction:
-        interact.expect('admin:')
-        interact.send(command)
-        interact.expect('.*Paste the Certificate and Hit Enter.*',timeout=5)
-        interact.send(interaction)
-        interact.send('\r\n')
-        interact.expect('admin:')
+    mylogs.info('Generating CSR')
+
+    url=f"https://{server_ip}/platformcom/api/v1/certmgr/config/csr"
+    
+    headers = {
+        "Accept": "*/*",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "service": service,
+        "distribution": "this-server",
+        "commonName": domain
+    }
+
+    try:
+        res = requests.post(url, headers=headers, json=body, verify=False, auth=(os_user, os_pass))
+        res.raise_for_status()
+    except requests.exceptions.HTTPError as err:
+        mylogs.warning(err)
+    
+    response = res.json()
+
+    return response['csr']
+
+def upload_uc_cert(server_ip, os_user, os_pass, service, certificate):
+    """
+    upload signed cert to uc server
+    """
+    mylogs.info('Uploading signed certificate')
+
+    url=f"https://{server_ip}/platformcom/api/v1/certmgr/config/identity/certificates"
+    
+    headers = {
+        "Accept": "*/*",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "service": service,
+        "certificates": [
+                certificate
+            ]
+        }
+
+    try:
+        res = requests.post(url, headers=headers, json=body, verify=False, auth=(os_user, os_pass))
+        res.raise_for_status()
+    except requests.exceptions.HTTPError as err:
+        mylogs.warning(err)
+    
+    response = res.json()
+    return response
+
+def upload_uc_ca(server_ip, os_user, os_pass, service, certificate):
+    """
+    upload signed cert to uc server
+    """
+
+    mylogs.info('Uploading CA certificate')
+
+    url=f"https://{server_ip}/platformcom/api/v1/certmgr/config/trust/certificates"
+    
+    headers = {
+        "Accept": "*/*",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "service": service,
+        "certificates": [
+                certificate
+            ],
+        "description": "ZeroSSL Trust Certificate"
+        }
+
+    try:
+        res = requests.post(url, headers=headers, json=body, verify=False, auth=(os_user, os_pass))
+        res.raise_for_status()
+    except requests.exceptions.HTTPError as err:
+        mylogs.warning(err)
+    
+    response = res.json()
+    return response
+
+if __name__ == "__main__":
+    # Extract base_domain and cert_name from command line options
+    base_domain=args.domain
+    cert_name=args.host+'.'+base_domain
+    verbose=args.verbose
+    ca=args.ca
+
+    # Setup logging
+    mylogs = logging.getLogger(__name__)
+    mylogs.setLevel(logging.DEBUG)
+
+    logformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
+
+    logfile = logging.FileHandler(f'{cert_name}.log')
+    logfile.setLevel(logging.INFO)
+    logfile.setFormatter(logformat)
+
+    mylogs.addHandler(logfile)
+
+    logstream = logging.StreamHandler()
+    if verbose:
+        logstream.setLevel(logging.INFO)
     else:
-        interact.expect('admin:')
-        interact.send(command)
-        interact.expect('admin:')
+        logstream.setLevel(logging.WARN)
+    logstream.setFormatter(logformat)
 
-    return(''.join(interact.current_output_clean.splitlines(keepends=True)[1:]).strip())
-    
-# Extract base_domain and cert_name from command line options
-base_domain=args.domain
-cert_name=args.host+'.'+base_domain
-verbose=args.verbose
-ca=args.ca
+    mylogs.addHandler(logstream)
 
-# Setup logging
-mylogs = logging.getLogger(__name__)
-mylogs.setLevel(logging.DEBUG)
-
-logformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
-
-logfile = logging.FileHandler(f'{cert_name}.log')
-logfile.setLevel(logging.INFO)
-logfile.setFormatter(logformat)
-
-mylogs.addHandler(logfile)
-
-logstream = logging.StreamHandler()
-if verbose:
-    logstream.setLevel(logging.INFO)
-else:
-    logstream.setLevel(logging.WARN)
-logstream.setFormatter(logformat)
-
-mylogs.addHandler(logstream)
-
-create_csr = cisco_uc_command(uc_ip,uc_user,uc_pass,'set csr gen tomcat') # Successfully Generated CSR  for tomcat
-
-if create_csr == 'Successfully Generated CSR  for tomcat':
-    mylogs.info('CSR Generated for tomcat')
-    # Get the CSR from the cisco_uc
-    get_csr = cisco_uc_command(uc_ip,uc_user,uc_pass,'show csr own tomcat') # Retrieve the CSR to get cert signed
-    
+    get_csr = generate_uc_csr(uc_ip,uc_user,uc_pass,'tomcat',cert_name)
+        
     if re.match('^(?:(?!-{3,}(?:BEGIN|END) CERTIFICATE REQUEST)[\s\S])*(-{3,}BEGIN CERTIFICATE REQUEST(?:(?!-{3,}BEGIN CERTIFICATE REQUEST)[\s\S])*?-{3,}END CERTIFICATE REQUEST-{3,})\s*$',get_csr):
         mylogs.info('CSR successfully retrieved from cisco_uc')
         # Generate a Certificate Signing Request (CSR) using OpenSSL
@@ -274,19 +347,22 @@ if create_csr == 'Successfully Generated CSR  for tomcat':
         # Check certificate available
         check_cert()
 
-        # Download certificates
+        # Download certificates from ZeroSSL
         signed_certs = get_cert()
 
         if ca:
-           cisco_uc_command(uc_ip,uc_user,uc_pass,'set cert import trust tomcat',signed_certs[1]) # Install CA trust chain
-        cisco_uc_command(uc_ip,uc_user,uc_pass,'set cert import own tomcat',signed_certs[0]) # Install certificate on server
-        cisco_uc_command(uc_ip,uc_user,uc_pass,'utils service restart Cisco Tomcat') # Restart Tomcat
+            upload_ca = upload_uc_ca(uc_ip,uc_user,uc_pass,'tomcat',signed_certs[1]) # Install CA trust chain
+            mylogs.info(upload_ca)
+
+        # Upload signed certificate to Cisco UC
+        upload_cert = upload_uc_cert(uc_ip,uc_user,uc_pass,'tomcat', signed_certs[0])
+
+        # log output
+        mylogs.info(upload_cert)
+        mylogs.info('Please restart tomcat:  utils service restart Cisco Tomcat')
 
         # Tidy up CNAME
         delete_cname()
     else:
         mylogs.warning('CSR not successfully retrieved from cisco_uc')
         sys.exit(8)
-else:
-    mylogs.warning('CSR Generation failed')
-    sys.exit(8)
