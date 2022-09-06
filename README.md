@@ -28,7 +28,13 @@ UC_PASS=
 ```
 Run python scripts with correct flags
 ```
-python3 get_cert.py --host cucm --domain cisco.com -ca -v
+python3 get_cert.py --host cucm --domain cisco.com
+
+optional arguments:
+  -h, --help       show this help message and exit
+  -v, --verbose    Enable verbose output
+  -ca              Install CA certificate
+  --days DAYS      Certificate Validity Days, default 90
 ```
 
 ## Blog
