@@ -28,7 +28,7 @@ UC_PASS=
 ```
 Run python scripts with correct flags
 ```
-python3 get_cert.py --host cucm --domain cisco.com
+python3 get-cert.py --host cucm --domain cisco.com
 
 optional arguments:
   -h, --help       show this help message and exit
