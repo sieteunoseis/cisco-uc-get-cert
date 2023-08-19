@@ -2,6 +2,11 @@
 
 > Python project that will generate a CSR on UC platform, request a certificate from ZeroSSL, verify domain via Digital Ocean, and install CA and signed certificate on server.
 
+> https://developer.cisco.com/docs/certificate-management/#!introduction/introduction
+> Note: The Certification Management API supports CUCM, IM&P, CUC, and CER products with version 14 and later.
+
+> Need to restart services after install. This can be done via SSH or AXL. 'utils service restart Cisco Tomcat'
+
 ## Usage
 
 Create python enviromemnt
@@ -28,12 +33,13 @@ UC_PASS=
 ```
 Run python scripts with correct flags
 ```
-python3 get_cert.py --host cucm --domain cisco.com
+python3 get-cert.py --host cucm --domain cisco.com
 
 optional arguments:
   -h, --help       show this help message and exit
   -v, --verbose    Enable verbose output
   -ca              Install CA certificate
+  -ssh             Install certificate via SSH instead of API.
   --days DAYS      Certificate Validity Days, default 90
 ```
 

@@ -128,3 +128,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .DS_Store
+
+*.cas
+*.crt
+*.log
+*.csr
+*.name
+*.resp
+*.vald

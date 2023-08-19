@@ -9,6 +9,7 @@ import sys
 import time
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import paramiko
 from paramiko_expect import SSHClientInteraction
 from dotenv import load_dotenv
 
@@ -17,11 +18,12 @@ load_dotenv()  # take environment variables from .env.
 # Create the parser
 parser = argparse.ArgumentParser()
 # Add an argument
-parser.add_argument('--host', type=str, required=True, help='Hostname of your server')
-parser.add_argument('--domain', type=str, required=True, help='Domain of your server')
-parser.add_argument('-v',"--verbose", action='store_true', help='Enable verbose output')
-parser.add_argument('-ca', action='store_true', help='Install CA certificate')
-parser.add_argument('--days', type=int, help='Certificate Validity Days, default 90')
+parser.add_argument('--host', type=str, required=True, help='Hostname of your server.')
+parser.add_argument('--domain', type=str, required=True, help='Domain of your server.')
+parser.add_argument('-v',"--verbose", action='store_true', help='Enable verbose output.')
+parser.add_argument('-ca', action='store_true', help='Install CA certificate.')
+parser.add_argument('--days', type=int, help='Certificate Validity Days, default 90.')
+parser.add_argument('--ssh', action='store_true', help='Use ssh for certificate installation instead of API (Pre 14.x versions and UCCX)')
 # Parse the argument
 args = parser.parse_args()
 
@@ -118,7 +120,7 @@ def create_cname():
 def test_cname():
     mylogs.info('Testing CNAME')
     cname_propagated='false'
-    wait_time=10
+    wait_time=20
     dns_resolver=dns.resolver.Resolver()
     while cname_propagated == 'false':
         try:
@@ -293,12 +295,35 @@ def upload_uc_ca(server_ip, os_user, os_pass, service, certificate):
     response = res.json()
     return response
 
+def cisco_uc_command(server_ip, os_user, os_pass,command,interaction = False):
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(server_ip, username=os_user, password=os_pass)
+    interact = SSHClientInteraction(ssh, timeout=90, display=True,lines_to_check=5)
+
+    # "display=True" is just to show you what script does in real time. While in production you can set it to False
+    if interaction:
+        interact.expect('admin:')
+        interact.send(command)
+        interact.expect('.*Paste the Certificate and Hit Enter.*',timeout=5)
+        interact.send(interaction)
+        interact.send('\r\n')
+        interact.expect('admin:')
+    else:
+        interact.expect('admin:')
+        interact.send(command)
+        interact.expect('admin:')
+
+    return(''.join(interact.current_output_clean.splitlines(keepends=True)[1:]).strip())
+
+
 if __name__ == "__main__":
     # Extract base_domain and cert_name from command line options
     base_domain=args.domain
     cert_name=args.host+'.'+base_domain
     verbose=args.verbose
     ca=args.ca
+    ssh=args.ssh
 
     # Setup logging
     mylogs = logging.getLogger(__name__)
@@ -321,7 +346,14 @@ if __name__ == "__main__":
 
     mylogs.addHandler(logstream)
 
-    get_csr = generate_uc_csr(uc_ip,uc_user,uc_pass,'tomcat',cert_name)
+    if ssh:
+        create_csr = cisco_uc_command(uc_ip,uc_user,uc_pass,'set csr gen tomcat')
+        if create_csr == 'Successfully Generated CSR  for tomcat':
+            mylogs.info('CSR Generated for tomcat')
+            # Get the CSR from the cisco_uc
+            get_csr = cisco_uc_command(uc_ip,uc_user,uc_pass,'show csr own tomcat') # Retrieve the CSR to get cert signed
+    else:
+        get_csr = generate_uc_csr(uc_ip,uc_user,uc_pass,'tomcat',cert_name)
         
     if re.match('^(?:(?!-{3,}(?:BEGIN|END) CERTIFICATE REQUEST)[\s\S])*(-{3,}BEGIN CERTIFICATE REQUEST(?:(?!-{3,}BEGIN CERTIFICATE REQUEST)[\s\S])*?-{3,}END CERTIFICATE REQUEST-{3,})\s*$',get_csr):
         mylogs.info('CSR successfully retrieved from cisco_uc')
@@ -353,15 +385,23 @@ if __name__ == "__main__":
         signed_certs = get_cert()
 
         if ca:
-            upload_ca = upload_uc_ca(uc_ip,uc_user,uc_pass,'tomcat',signed_certs[1]) # Install CA trust chain
-            mylogs.info(upload_ca)
+            if ssh:
+                upload_ca = cisco_uc_command(uc_ip,uc_user,uc_pass,'set cert import trust tomcat',signed_certs[1]) # Install CA trust chain
+                mylogs.info(upload_ca)
+            else:
+                upload_ca = upload_uc_ca(uc_ip,uc_user,uc_pass,'tomcat',signed_certs[1]) # Install CA trust chain
+                mylogs.info(upload_ca)
 
-        # Upload signed certificate to Cisco UC
-        upload_cert = upload_uc_cert(uc_ip,uc_user,uc_pass,'tomcat', signed_certs[0])
-
-        # log output
-        mylogs.info(upload_cert)
-        mylogs.info('Please restart tomcat:  utils service restart Cisco Tomcat')
+        if ssh:
+            cisco_uc_command(uc_ip,uc_user,uc_pass,'set cert import own tomcat',signed_certs[0]) # Install certificate
+            cisco_uc_command(uc_ip,uc_user,uc_pass,'utils service restart Cisco Tomcat') # Restart Tomcat
+            mylogs.info('Uploaded certificate. Restarting Cisco Tomcat.')
+        else:
+            # Upload signed certificate to Cisco UC
+            upload_cert = upload_uc_cert(uc_ip,uc_user,uc_pass,'tomcat', signed_certs[0])
+            # log output
+            mylogs.info(upload_cert)
+            mylogs.info('Please restart tomcat:  utils service restart Cisco Tomcat')
 
         # Tidy up CNAME
         delete_cname()
