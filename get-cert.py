@@ -40,19 +40,17 @@ args = parser.parse_args()
 # Get API tokens from environment variables
 do_token = os.getenv('DO_KEY')
 zerossl_token = os.getenv('ZEROSSL_KEY')
-uc_ip = os.getenv('UC_IP')
 uc_user = os.getenv('UC_USER')
 uc_pass = os.getenv('UC_PASS')
 
 if not "DO_KEY" in os.environ and "ZEROSSL_KEY" not in os.environ\
-    and "UC_IP" not in os.environ and "UC_USER" not in os.environ and "UC_PASS" not in os.environ:
+    and "UC_USER" not in os.environ and "UC_PASS" not in os.environ:
 
     print("""
     Error: missing one or more environment variables.
     Please ensure you've defined the following:
     DO_KEY`
     ZEROSSL_KEY
-    UC_IP
     UC_USER
     UC_PASS
     """)
@@ -74,14 +72,14 @@ def draft_cert():
         cert_days = 90
     api_url = f'{zerossl_base}certificates?access_key={zerossl_token}'
     # Read CSR file into variable and strip out newlines
-    with open(f'{cert_name}.csr', 'r') as csr:
+    with open(f'{fqdn}.csr', 'r') as csr:
         csr_content = csr.read().replace('\n', '')
     cert_params = {'certificate_validity_days' : cert_days,
-        'certificate_domains' : cert_name,
+        'certificate_domains' : fqdn,
         'certificate_csr' : csr_content}
     cert_req = requests.post(api_url, data=cert_params)
     
-    resp_file = open(f'{cert_name}.resp', 'w')
+    resp_file = open(f'{fqdn}.resp', 'w')
     resp_file.write(cert_req.text)
     resp_file.close()
     if 'id' not in cert_req.json():
@@ -90,9 +88,9 @@ def draft_cert():
     else:
         cert_id=cert_req.json()['id']
         mylogs.info(f'Certificate ID is: {cert_id}')    
-        cname_host=(cert_req.json()['validation']['other_methods'][f'{cert_name}']['cname_validation_p1']).replace(f'.{base_domain}','')
+        cname_host=(cert_req.json()['validation']['other_methods'][f'{fqdn}']['cname_validation_p1']).replace(f'.{base_domain}','')
         mylogs.info(f'CNAME host is: {cname_host}')
-        cname_value=cert_req.json()['validation']['other_methods'][f'{cert_name}']['cname_validation_p2']
+        cname_value=cert_req.json()['validation']['other_methods'][f'{fqdn}']['cname_validation_p2']
         mylogs.info(f'CNAME value is: {cname_value}')
         return(cert_id,cname_host,cname_value)
 
@@ -104,7 +102,7 @@ def create_cname():
         'data' : f'{cname_value.lower()}.', 'ttl' : 1800}
     cname_add = requests.post(api_url, headers=do_headers, json=cname_params)
 
-    name_file = open(f'{cert_name}.name', 'w')
+    name_file = open(f'{fqdn}.name', 'w')
     name_file.write(f'{cname_host}{os.linesep}')
     name_file.write(f'{cname_value}{os.linesep}')
     name_file.write(cname_add.text)
@@ -152,11 +150,11 @@ def validate_cert(retry):
             mylogs.warning(f'Certificate validation failed\n{cert_vald.text}')
             sys.exit(6)
         else:
-            mylogs.info(f'Retry {retries} for {cert_name}' )
+            mylogs.info(f'Retry {retries} for {fqdn}' )
             time.sleep(10^retries)
             validate_cert(retries)
     
-    resp_file = open(f'{cert_name}.vald', 'w')
+    resp_file = open(f'{fqdn}.vald', 'w')
     resp_file.write(cert_vald.text)
     resp_file.close()
 
@@ -187,11 +185,11 @@ def get_cert():
     cert_contents = cert.json()['certificate.crt']
     ca_contents = cert.json()['ca_bundle.crt']
 
-    cert_file = open(f'{cert_name}.crt', 'w')
+    cert_file = open(f'{fqdn}.crt', 'w')
     cert_file.write(cert.json()['certificate.crt'])
     cert_file.close()
 
-    ca_file = open(f'{cert_name}.cas', 'w')
+    ca_file = open(f'{fqdn}.cas', 'w')
     ca_file.write(cert.json()['ca_bundle.crt'])
     ca_file.close()
 
@@ -305,22 +303,23 @@ def cisco_uc_command(server_ip, os_user, os_pass,command,interaction = False):
     if interaction:
         interact.expect('admin:')
         interact.send(command)
-        interact.expect('.*Paste the Certificate and Hit Enter.*',timeout=5)
+        interact.expect(['.*Paste the Certificate and Hit Enter.*','.*Include OU in CSR (yes|no)?.*'],timeout=10)
+        time.sleep(5) # Wait for prompt to return
         interact.send(interaction)
         interact.send('\r\n')
         interact.expect('admin:')
     else:
         interact.expect('admin:')
         interact.send(command)
-        interact.expect('admin:')
+        interact.expect('admin:',timeout=30)
 
     return(''.join(interact.current_output_clean.splitlines(keepends=True)[1:]).strip())
 
 
 if __name__ == "__main__":
-    # Extract base_domain and cert_name from command line options
+    # Extract base_domain and fqdn from command line options
     base_domain=args.domain
-    cert_name=args.host+'.'+base_domain
+    fqdn=args.host+'.'+base_domain
     verbose=args.verbose
     ca=args.ca
     ssh=args.ssh
@@ -331,7 +330,7 @@ if __name__ == "__main__":
 
     logformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
 
-    logfile = logging.FileHandler(f'{cert_name}.log')
+    logfile = logging.FileHandler(f'{fqdn}.log')
     logfile.setLevel(logging.INFO)
     logfile.setFormatter(logformat)
 
@@ -347,19 +346,20 @@ if __name__ == "__main__":
     mylogs.addHandler(logstream)
 
     if ssh:
-        create_csr = cisco_uc_command(uc_ip,uc_user,uc_pass,'set csr gen tomcat')
+        create_csr = cisco_uc_command(fqdn,uc_user,uc_pass,'set csr gen tomcat','yes')
+
         if create_csr == 'Successfully Generated CSR  for tomcat':
             mylogs.info('CSR Generated for tomcat')
             # Get the CSR from the cisco_uc
-            get_csr = cisco_uc_command(uc_ip,uc_user,uc_pass,'show csr own tomcat') # Retrieve the CSR to get cert signed
+            get_csr = cisco_uc_command(fqdn,uc_user,uc_pass,'show csr own tomcat') # Retrieve the CSR to get cert signed
     else:
-        get_csr = generate_uc_csr(uc_ip,uc_user,uc_pass,'tomcat',cert_name)
+        get_csr = generate_uc_csr(fqdn,uc_user,uc_pass,'tomcat',fqdn)
         
     if re.match('^(?:(?!-{3,}(?:BEGIN|END) CERTIFICATE REQUEST)[\s\S])*(-{3,}BEGIN CERTIFICATE REQUEST(?:(?!-{3,}BEGIN CERTIFICATE REQUEST)[\s\S])*?-{3,}END CERTIFICATE REQUEST-{3,})\s*$',get_csr):
         mylogs.info('CSR successfully retrieved from cisco_uc')
         # Generate a Certificate Signing Request (CSR) using OpenSSL
-        mylogs.info(f'Creating CSR {cert_name}.csr')
-        csr_file = open(f'{cert_name}.csr', 'w')
+        mylogs.info(f'Creating CSR {fqdn}.csr')
+        csr_file = open(f'{fqdn}.csr', 'w')
         csr_file.write(get_csr)
         csr_file.close()
 
@@ -386,19 +386,19 @@ if __name__ == "__main__":
 
         if ca:
             if ssh:
-                upload_ca = cisco_uc_command(uc_ip,uc_user,uc_pass,'set cert import trust tomcat',signed_certs[1]) # Install CA trust chain
+                upload_ca = cisco_uc_command(fqdn,uc_user,uc_pass,'set cert import trust tomcat',signed_certs[1]) # Install CA trust chain
                 mylogs.info(upload_ca)
             else:
-                upload_ca = upload_uc_ca(uc_ip,uc_user,uc_pass,'tomcat',signed_certs[1]) # Install CA trust chain
+                upload_ca = upload_uc_ca(fqdn,uc_user,uc_pass,'tomcat',signed_certs[1]) # Install CA trust chain
                 mylogs.info(upload_ca)
 
         if ssh:
-            cisco_uc_command(uc_ip,uc_user,uc_pass,'set cert import own tomcat',signed_certs[0]) # Install certificate
-            cisco_uc_command(uc_ip,uc_user,uc_pass,'utils service restart Cisco Tomcat') # Restart Tomcat
+            cisco_uc_command(fqdn,uc_user,uc_pass,'set cert import own tomcat',signed_certs[0]) # Install certificate
+            cisco_uc_command(fqdn,uc_user,uc_pass,'utils service restart Cisco Tomcat') # Restart Tomcat
             mylogs.info('Uploaded certificate. Restarting Cisco Tomcat.')
         else:
             # Upload signed certificate to Cisco UC
-            upload_cert = upload_uc_cert(uc_ip,uc_user,uc_pass,'tomcat', signed_certs[0])
+            upload_cert = upload_uc_cert(fqdn,uc_user,uc_pass,'tomcat', signed_certs[0])
             # log output
             mylogs.info(upload_cert)
             mylogs.info('Please restart tomcat:  utils service restart Cisco Tomcat')

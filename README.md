@@ -39,7 +39,7 @@ optional arguments:
   -h, --help       show this help message and exit
   -v, --verbose    Enable verbose output
   -ca              Install CA certificate
-  -ssh             Install certificate via SSH instead of API.
+  --ssh             Install certificate via SSH instead of API.
   --days DAYS      Certificate Validity Days, default 90
 ```
 
