@@ -27,7 +27,6 @@ Add variables to ENV file
 ```
 DO_KEY=
 ZEROSSL_KEY=
-UC_IP=
 UC_USER=
 UC_PASS=
 ```
