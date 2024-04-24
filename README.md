@@ -1,6 +1,6 @@
 # Cisco UC Certification Generator
 
-> Python project that will generate a CSR, request a certificate, verify domain and install CA and signed certificate on server.
+Python project that will generate a CSR, request a certificate, verify domain and install CA and signed certificate on server.
 
 Built using:
 - ZeroSSL (SSL Certificate) - [ZeroSSL API](https://zerossl.com/documentation/api/)
@@ -10,7 +10,7 @@ Built using:
 - Cloudflare  (DNS Provider) - [Cloudflare API](https://developers.cloudflare.com/api)
 - Cisco UC (Certificate Management) - [Cisco UC API](https://developer.cisco.com/docs/certificate-management/#!introduction/introduction)
 
-> Note: The Certification Management API supports CUCM, IM&P, CUC, and CER products with version 14 and later.
+> Note: The Certification Management API supports CUCM, IM&P, CUC, and CER products with version 14 and later. Earlier versions will need to use SSH to install certificates.
 
 > Need to restart services after install. This can be done via SSH or AXL. 'utils service restart Cisco Tomcat'
 
