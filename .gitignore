@@ -136,3 +136,6 @@ dmypy.json
 *.name
 *.resp
 *.vald
+
+# Letsencrypt account json file
+*.json
