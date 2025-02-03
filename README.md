@@ -1,14 +1,27 @@
 # Cisco UC Certification Generator
 
-Python project that will generate a CSR, request a certificate, verify domain and install CA and signed certificate on server.
+Python project that will generate a CSR, request a certificate, verify domain and install CA and signed certificate on a Cisco VOS server.
 
-Built using:
-- ZeroSSL (SSL Certificate) - [ZeroSSL API](https://zerossl.com/documentation/api/)
-- Let's Encrypt (SSL Certificate) - [Let's Encrypt API](https://letsencrypt.org/docs/)
-- MXToolBox (DNS Verification) - [MXTOOLBOX API](https://mxtoolbox.com/user/api)
-- DigitalOcean (DNS Provider) - [DigitalOcean API](https://www.digitalocean.com/docs/apis-clients/api/)
-- Cloudflare  (DNS Provider) - [Cloudflare API](https://developers.cloudflare.com/api)
-- Cisco UC (Certificate Management) - [Cisco UC API](https://developer.cisco.com/docs/certificate-management/#!introduction/introduction)
+## Built Using
+
+### SSL Certificate Providers
+- ZeroSSL - [ZeroSSL API](https://zerossl.com/documentation/api/)
+- Let's Encrypt - [Let's Encrypt API](https://letsencrypt.org/docs/)
+
+### DNS Verification (for ZeroSSL)
+- MXToolBox - [MXTOOLBOX API](https://mxtoolbox.com/user/api)
+
+### DNS Providers
+- Cloudflare - [Cloudflare API](https://developers.cloudflare.com/api)
+- DigitalOcean - [DigitalOcean API](https://www.digitalocean.com/docs/apis-clients/api/)
+- AWS Route53 - [AWS Route53 API](https://docs.aws.amazon.com/Route53/latest/APIReference/Welcome.html)
+- Azure DNS - [Azure DNS API](https://learn.microsoft.com/en-us/azure/dns/)
+- Google Cloud DNS - [Google Cloud DNS API](https://cloud.google.com/dns/docs/apis)
+
+Note: Currently have only tested Cloudflare and DigitalOcean. The other DNS providers are provided based on documentation, please open an issue if these do not working for you.
+
+### Certificate Management
+- Cisco UC - [Cisco UC API](https://developer.cisco.com/docs/certificate-management/#!introduction/introduction)
 
 > Note: The Certification Management API supports CUCM, IM&P, CUC, and CER products with version 14 and later. Earlier versions will need to use SSH to install certificates.
 
@@ -16,33 +29,77 @@ Built using:
 
 ## Usage
 
-Create python enviromemnt
+Create python environment
 
-```
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip3 install -r requirements.txt
-
 ```
+
 Create ENV file
 
-```
+```bash
 touch .env
 ```
-Add variables to ENV file
 
-```
-CF_KEY=
-CF_ZONE=
-DO_KEY=
-ZEROSSL_KEY=
-MXTOOLBOX_KEY=
+Add variables to ENV file. Only add the variables for the DNS provider you plan to use:
+
+```bash
+# Required Variables
 UC_USER=
 UC_PASS=
+
+# SSL Provider Keys (choose one)
+
+# For Let's Encrypt
 LETSENCRYPT_EMAIL=
+
+# For ZeroSSL
+ZEROSSL_KEY=
+MXTOOLBOX_KEY=
+
+# DNS Provider Variables (choose one section)
+
+# For Cloudflare
+CF_KEY=
+CF_ZONE=
+# Optional DNS Servers if using Let's Encrypt
+LETSENCRYPT_DNS_1="1.1.1.1"
+LETSENCRYPT_DNS_2="1.0.0.1"
+
+# For DigitalOcean
+DO_KEY=
+# Optional DNS Servers if using Let's Encrypt
+LETSENCRYPT_DNS_1="67.207.67.2"
+LETSENCRYPT_DNS_2="67.207.67.3"
+
+# For AWS Route53
+AWS_ACCESS_KEY=
+AWS_SECRET_KEY=
+AWS_ZONE_ID=
+# Optional DNS Servers if using Let's Encrypt
+LETSENCRYPT_DNS_1="8.8.8.8"
+LETSENCRYPT_DNS_2="8.8.4.4"
+
+# For Azure DNS
+AZURE_SUBSCRIPTION_ID=
+AZURE_RESOURCE_GROUP=
+AZURE_ZONE_NAME=
+# Optional DNS Servers if using Let's Encrypt
+LETSENCRYPT_DNS_1="168.63.129.16"
+LETSENCRYPT_DNS_2="208.67.220.220"
+
+# For Google Cloud DNS
+GOOGLE_PROJECT_ID=
+GOOGLE_ZONE_NAME=
+# Optional DNS Servers if using Let's Encrypt
+LETSENCRYPT_DNS_1="8.8.8.8"
+LETSENCRYPT_DNS_2="8.8.4.4"
 ```
+
 Run python scripts with correct flags
-```
+```bash
 python3 get-cert.py --host cucm --domain cisco.com [-h] [-v] [-ca] [--ssh] [--days DAYS] [--dnsprovider PROVIDER] [--sslprovider PROVIDER]
 
 optional arguments:
@@ -51,8 +108,16 @@ optional arguments:
   -ca              Install Intermediate Certificate
   --ssh            Install certificate via SSH instead of API.
   --days           Certificate Validity Days. Defaults to 90 days. Options are 90 or 365. Note: Let's Encrypt only supports 90 days.
-  --dnsprovider    DNS Provider. Defaults to cloudflare. Options are digitalocean or cloudflare.
+  --dnsprovider    DNS Provider. Defaults to cloudflare. Options are cloudflare, digitalocean, route53, azure, or google.
   --sslprovider    SSL Provider. Defaults to letsencrypt. Options are zerossl or letsencrypt.
+```
+
+## Restart Services
+
+Provided is a script to restart services via ssh. This is useful if you are using the API to install the certificate.
+
+```bash
+python3 helpers/sshRestartCiscoTomcat.py -H cucm.cisco.com -u administrator -p ciscopsdt
 ```
 
 ## Blog

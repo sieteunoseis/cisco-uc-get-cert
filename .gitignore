@@ -137,5 +137,7 @@ dmypy.json
 *.resp
 *.vald
 
-# Letsencrypt account json file
+# Letsencrypt and logging
 *.json
+accounts
+logs
