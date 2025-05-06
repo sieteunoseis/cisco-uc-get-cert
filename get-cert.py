@@ -245,15 +245,38 @@ class LetsEncryptProvider(CertificateProvider):
         with open(csr_path, "r") as csr:
             client.csr = csr.read().encode("utf-8")
 
+        self.logger.info("Requesting verification tokens from Let's Encrypt")
         resp = client.request_verification_tokens()
 
         # Save response for debugging
         resp_path = path.join(self.log_dir, f"{fqdn}.resp")
         with open(resp_path, "w") as resp_file:
             resp_file.write(str(resp))
-
-        txt_host = list(resp.items())[0][0]
-        txt_value = list(resp.items())[0][1]
+        
+        # Validate response before extracting values
+        if resp is None:
+            self.logger.error("Failed to get verification tokens: Response is None")
+            sys.exit(8)
+            
+        if not resp or not hasattr(resp, 'items') or not resp.items():
+            self.logger.error(f"Invalid response from Let's Encrypt: {resp}")
+            sys.exit(8)
+            
+        # Extract DNS validation details safely
+        try:
+            items = list(resp.items())
+            if not items:
+                self.logger.error("No verification tokens returned from Let's Encrypt")
+                sys.exit(8)
+                
+            txt_host = items[0][0]
+            txt_value = items[0][1]
+            
+            self.logger.info(f"Received verification token - Host: {txt_host}, Value: {txt_value}")
+        except (IndexError, AttributeError, TypeError) as e:
+            self.logger.error(f"Failed to extract verification tokens: {str(e)}")
+            self.logger.error(f"Response content: {resp}")
+            sys.exit(8)
 
         return client, txt_host, txt_value
 
@@ -261,9 +284,7 @@ class LetsEncryptProvider(CertificateProvider):
         self.logger.info("Getting certificate from Let's Encrypt")
         client.request_certificate(wait=10, timeout=90)
         cert_chain = client.certificate.decode()
-        certs = re.findall(
-            "(-----[BEGIN \S\ ]+?-----[\S\s]+?-----[END \S\ ]+?-----)", cert_chain
-        )
+        certs = re.findall(r"(-----[BEGIN \S\ ]+?-----[\S\s]+?-----[END \S\ ]+?-----)", cert_chain)
 
         # Save certificates to files in logs directory
         cert_path = path.join(self.log_dir, f"{fqdn}.crt")
@@ -854,7 +875,7 @@ def main():
 
         # Validate CSR format
         if not re.match(
-            "^(?:(?!-{3,}(?:BEGIN|END) CERTIFICATE REQUEST)[\s\S])*(-{3,}BEGIN CERTIFICATE REQUEST(?:(?!-{3,}BEGIN CERTIFICATE REQUEST)[\s\S])*?-{3,}END CERTIFICATE REQUEST-{3,})\s*$",
+            r"^(?:(?!-{3,}(?:BEGIN|END) CERTIFICATE REQUEST)[\s\S])*(-{3,}BEGIN CERTIFICATE REQUEST(?:(?!-{3,}BEGIN CERTIFICATE REQUEST)[\s\S])*?-{3,}END CERTIFICATE REQUEST-{3,})\s*$",
             get_csr,
         ):
             logger.error("Invalid CSR format")

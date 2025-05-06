@@ -120,6 +120,28 @@ Provided is a script to restart services via ssh. This is useful if you are usin
 python3 helpers/sshRestartCiscoTomcat.py -H cucm.cisco.com -u administrator -p ciscopsdt
 ```
 
+## Troubleshooting
+
+If you run into issues, please check the following:
+1. **Check Environment Variables**: Ensure all required environment variables are set correctly in the `.env` file.
+2. **Verbose Mode**: Run the script with the `-v` or `--verbose` flag to get detailed output for debugging.
+3. **DNS Propagation**: If using DNS verification, ensure that DNS records have propagated before running the script.
+4. **Firewall Rules**: Ensure that the Cisco UC server is accessible from the machine running the script, and that any necessary firewall rules are in place.
+5. **Certificate Authority Limits**: Be aware of any rate limits imposed by the SSL provider (e.g., Let's Encrypt has limits on the number of certificates issued per domain per week). 
+
+If you see the following error, it is likely due to the CA certificate not being installed on the Cisco UC server:
+
+```
+ERROR:Failed to upload certificate: 400 Client Error:  for url: https://localhost/platformcom/api/v1/certmgr/config/identity/certificates
+```
+
+If you see this error, you will need to change the DNS servers in your `.env` file to public DNS servers. This is because the SSL validation servers are unable to reach your server's DNS records:
+
+```
+ERROR:An error occurred: All nameservers failed to answer the query _acme-challenge.cucm01-pub.automate.builders. IN TXT: Server Do53:172.64.52.210@53 answered REFUSED; Server Do53:172.64.53.21@53 answered REFUSED
+```
+
+
 ## Blog
 
 Like content like this? Check out my [Medium](https://medium.com/automate-builders) blog for more projects.
