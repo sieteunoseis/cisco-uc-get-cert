@@ -293,10 +293,26 @@ class LetsEncryptProvider(CertificateProvider):
         with open(cert_path, "w") as cert_file:
             cert_file.write(certs[0])
 
+        # Save intermediate certificates
+        intermediate_certs = certs[1:]
         with open(ca_path, "w") as ca_file:
-            ca_file.write(certs[1])
+            for cert in intermediate_certs:
+                ca_file.write(cert + "\n")
 
-        return certs[0], certs[1]
+        # Try to save root certificate if available (Let's Encrypt provides full chain)
+        if len(certs) >= 3:
+            root_cert_dir = path.join("accounts", fqdn)
+            os.makedirs(root_cert_dir, exist_ok=True)
+            root_cert_path = path.join(root_cert_dir, "root.crt")
+            try:
+                with open(root_cert_path, "w") as root_file:
+                    root_file.write(certs[-1])  # Last cert should be root
+                self.logger.info(f"Saved root certificate to {root_cert_path}")
+            except Exception as e:
+                self.logger.warning(f"Could not save root certificate: {e}")
+
+        # Return leaf and intermediate certificates
+        return certs[0], "\n".join(intermediate_certs)
 
 
 class DNSProvider(ABC):
@@ -673,12 +689,22 @@ class CiscoUCProvider:
             self.logger.error(f"Failed to get certificates: {err}")
             sys.exit(8)
 
-    def generate_csr(self, service: str, domain: str) -> str:
+    def generate_csr(self, service: str, domain: str, alt_names: Optional[list] = None) -> str:
         self.logger.info("Generating CSR")
         url = f"https://{self.host}/platformcom/api/v1/certmgr/config/csr"
 
         headers = {"Accept": "*/*", "Content-Type": "application/json"}
-        body = {"service": service, "distribution": "this-server", "commonName": domain}
+        body = {
+            "service": service,
+            "distribution": "this-server",
+            "commonName": domain,
+            "keyType": "rsa",
+            "keyLength": 2048,
+            "hashAlgorithm": "sha256",
+        }
+        
+        if alt_names:
+            body["altNames"] = alt_names
 
         try:
             response = requests.post(
@@ -713,6 +739,69 @@ class CiscoUCProvider:
             return response.json()
         except requests.exceptions.HTTPError as err:
             self.logger.error(f"Failed to upload certificate: {err}")
+            return {"error": str(err)}
+
+    def upload_cert_chain(self, service: str, fqdn: str, cert_contents: str, ca_contents: str) -> Dict:
+        """Upload a full certificate chain including leaf, intermediate, and root certificates"""
+        self.logger.info(f"VOS certificate chain upload request to {self.host}:443/platformcom/api/v1/certmgr/config/identity/certificates")
+        
+        # Parse certificates from the ca_contents (intermediate and root)
+        certs = re.findall(r"(-----[BEGIN \S\ ]+?-----[\S\s]+?-----[END \S\ ]+?-----)", ca_contents)
+        
+        # Build full certificate chain
+        cert_chain = [cert_contents.strip()]  # Leaf certificate first
+        cert_chain.extend([cert.strip() for cert in certs])  # Add intermediate and root
+        
+        # Try to load root certificate from accounts directory if available
+        root_cert_path = path.join("accounts", fqdn, "root.crt")
+        if path.exists(root_cert_path):
+            self.logger.info(f"Loading root certificate from {root_cert_path}")
+            try:
+                with open(root_cert_path, "r") as root_file:
+                    root_cert = root_file.read().strip()
+                    # Only add if not already in chain
+                    if root_cert not in cert_chain:
+                        cert_chain.append(root_cert)
+            except Exception as e:
+                self.logger.warning(f"Could not load root certificate: {e}")
+        else:
+            self.logger.warning(f"Could not load root certificate: ENOENT: no such file or directory, open '{root_cert_path}'")
+        
+        # Log certificate chain composition
+        cert_types = []
+        if len(cert_chain) >= 1:
+            cert_types.append("leaf")
+        if len(cert_chain) >= 2:
+            cert_types.append("intermediate")
+        if len(cert_chain) >= 3:
+            cert_types.append("root")
+            
+        self.logger.info(f"Uploading full certificate chain ({len(cert_chain)} certificates) to {service} service")
+        self.logger.info(f"Certificate chain includes: {', '.join(cert_types)}")
+        
+        url = f"https://{self.host}/platformcom/api/v1/certmgr/config/identity/certificates"
+        headers = {"Accept": "*/*", "Content-Type": "application/json"}
+        body = {"service": service, "certificates": cert_chain}
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=body,
+                verify=False,
+                auth=(self.username, self.password),
+            )
+            
+            self.logger.info(f"VOS certificate chain upload response ({response.status_code}): {response.text}")
+            
+            if response.status_code != 200:
+                self.logger.error(f"Certificate chain upload failed with status {response.status_code}: {response.text}")
+                return {"error": f"HTTP {response.status_code}: {response.text}"}
+                
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as err:
+            self.logger.error(f"Failed to upload certificate chain: {err}")
             return {"error": str(err)}
 
     def upload_ca(self, service: str, certificate: str) -> Dict:
@@ -810,6 +899,12 @@ def main():
         choices=["letsencrypt", "zerossl"],
         default="letsencrypt",
     )
+    parser.add_argument(
+        "--alt-names",
+        type=str,
+        nargs="*",
+        help="Alternative names for the certificate (space separated)",
+    )
 
     args = parser.parse_args()
 
@@ -871,7 +966,7 @@ def main():
                 get_csr = cisco_uc.ssh_command("show csr own tomcat")
         else:
             logger.info("Generating CSR via API")
-            get_csr = cisco_uc.generate_csr("tomcat", fqdn)
+            get_csr = cisco_uc.generate_csr("tomcat", fqdn, getattr(args, 'alt_names', None))
 
         # Validate CSR format
         if not re.match(
@@ -978,8 +1073,13 @@ def main():
             cisco_uc.ssh_command("utils service restart Cisco Tomcat")
             logger.info("Certificate installed. Tomcat service restarted.")
         else:
-            upload_cert = cisco_uc.upload_cert("tomcat", cert_contents)
-            logger.info(f"Certificate installation: {upload_cert}")
+            # Use certificate chain upload for better compatibility with VOS requirements
+            upload_cert = cisco_uc.upload_cert_chain("tomcat", fqdn, cert_contents, ca_contents)
+            if "error" not in upload_cert:
+                logger.info("=== Certificate obtained successfully from Let's Encrypt ===" if args.sslprovider == "letsencrypt" else "=== Certificate obtained successfully from ZeroSSL ===")
+                logger.info(f"Certificate chain installation: {upload_cert}")
+            else:
+                logger.error(f"Certificate chain installation failed: {upload_cert}")
             logger.info("Please restart tomcat: utils service restart Cisco Tomcat")
 
         # Clean up DNS verification

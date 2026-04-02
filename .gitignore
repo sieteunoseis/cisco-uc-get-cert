@@ -141,3 +141,5 @@ dmypy.json
 *.json
 accounts
 logs
+/net-commander
+node_modules/
